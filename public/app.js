@@ -271,48 +271,56 @@ async function pageVersions() {
 }
 
 async function pageInstances() {
-  layout('instances', `<h1>Instances</h1><div id="body" class="muted">Loading…</div>`);
+  layout('instances', `<h1>Instances</h1>
+    <div class="card" id="create-card"><h2>New instance</h2><div class="muted">Loading…</div></div>
+    <div class="card"><h2>Existing instances</h2><div id="inst-list" class="muted">Loading…</div></div>`);
   const ep = epoch;
-  const load = act(async () => {
-    const [insts, vers] = await Promise.all([api('/instances'), api('/versions')]);
+  const [insts, vers] = await Promise.all([api('/instances'), api('/versions')]);
+  if (ep !== epoch) return;
+
+  // The create form is rendered ONCE — the status poll below must never
+  // touch it, or it would wipe whatever the user is typing.
+  const createForm = vers.installed.length === 0
+    ? `<div class="muted">Install a MongoDB version first on the <a href="#/versions">Versions</a> page, then create instances here.</div>`
+    : `<div class="row">
+        <label><span class="lbl">Name</span><input id="ni-name" placeholder="e.g. main, analytics" /></label>
+        <label><span class="lbl">Version</span><select id="ni-version">${vers.installed.map((v) => `<option>${esc(v)}</option>`).join('')}</select></label>
+        <label><span class="lbl">Port</span><input id="ni-port" type="number" value="${27017 + insts.length}" /></label>
+        <label><span class="lbl">Bind IP</span><input id="ni-bind" value="127.0.0.1" /></label>
+        <button class="primary" onclick="h.createInstance()">Create & start</button>
+      </div>
+      <div class="muted mt">Each instance gets its own data directory, config and systemd service (<code>mongopilot-&lt;name&gt;</code>). Use bind IP <code>0.0.0.0</code> to listen on all interfaces (enable auth first!).</div>`;
+  document.getElementById('create-card').innerHTML = `<h2>New instance</h2>${createForm}`;
+
+  const renderList = (list) => {
+    const el = document.getElementById('inst-list');
+    if (!el) return;
+    el.innerHTML = list.length === 0 ? '<div class="muted">None yet.</div>' : `
+      <table><thead><tr><th>Name</th><th>Version</th><th>Port</th><th>Bind</th><th>Status</th><th>Auth</th><th></th></tr></thead><tbody>
+        ${list.map((i) => `<tr>
+          <td><a href="#/instance/${i.name}">${esc(i.name)}</a></td>
+          <td class="mono">${esc(i.version)}</td>
+          <td class="mono">${i.port}</td>
+          <td class="mono">${esc(i.bindIp)}</td>
+          <td>${badge(i.status.state)}</td>
+          <td>${i.authEnabled ? '<span class="badge ok">on</span>' : '<span class="badge warn">off</span>'}</td>
+          <td class="flex">
+            <button class="sm" onclick="h.instAction('${i.name}','start')">Start</button>
+            <button class="sm" onclick="h.instAction('${i.name}','restart')">Restart</button>
+            <button class="sm" onclick="h.instAction('${i.name}','stop')">Stop</button>
+            <a href="#/instance/${i.name}"><button class="sm">Manage</button></a>
+          </td>
+        </tr>`).join('')}
+      </tbody></table>`;
+  };
+  renderList(insts);
+
+  const poll = act(async () => {
+    const list = await api('/instances');
     if (ep !== epoch) return;
-    const body = document.getElementById('body');
-    if (!body) return;
-    const createForm = vers.installed.length === 0
-      ? `<div class="muted">Install a MongoDB version first on the <a href="#/versions">Versions</a> page, then create instances here.</div>`
-      : `<div class="row">
-          <label><span class="lbl">Name</span><input id="ni-name" placeholder="e.g. main, analytics" /></label>
-          <label><span class="lbl">Version</span><select id="ni-version">${vers.installed.map((v) => `<option>${esc(v)}</option>`).join('')}</select></label>
-          <label><span class="lbl">Port</span><input id="ni-port" type="number" value="${27017 + insts.length}" /></label>
-          <label><span class="lbl">Bind IP</span><input id="ni-bind" value="127.0.0.1" /></label>
-          <button class="primary" onclick="h.createInstance()">Create & start</button>
-        </div>
-        <div class="muted mt">Each instance gets its own data directory, config and systemd service (<code>mongopilot-&lt;name&gt;</code>). Use bind IP <code>0.0.0.0</code> to listen on all interfaces (enable auth first!).</div>`;
-    body.innerHTML = `
-      <div class="card"><h2>New instance</h2>${createForm}</div>
-      <div class="card">
-        <h2>Existing instances</h2>
-        ${insts.length === 0 ? '<div class="muted">None yet.</div>' : `
-        <table><thead><tr><th>Name</th><th>Version</th><th>Port</th><th>Bind</th><th>Status</th><th>Auth</th><th></th></tr></thead><tbody>
-          ${insts.map((i) => `<tr>
-            <td><a href="#/instance/${i.name}">${esc(i.name)}</a></td>
-            <td class="mono">${esc(i.version)}</td>
-            <td class="mono">${i.port}</td>
-            <td class="mono">${esc(i.bindIp)}</td>
-            <td>${badge(i.status.state)}</td>
-            <td>${i.authEnabled ? '<span class="badge ok">on</span>' : '<span class="badge warn">off</span>'}</td>
-            <td class="flex">
-              <button class="sm" onclick="h.instAction('${i.name}','start')">Start</button>
-              <button class="sm" onclick="h.instAction('${i.name}','restart')">Restart</button>
-              <button class="sm" onclick="h.instAction('${i.name}','stop')">Stop</button>
-              <a href="#/instance/${i.name}"><button class="sm">Manage</button></a>
-            </td>
-          </tr>`).join('')}
-        </tbody></table>`}
-      </div>`;
+    renderList(list);
   });
-  await load();
-  pollTimer = setInterval(load, 8000);
+  pollTimer = setInterval(poll, 8000);
 }
 
 const TABS = [
@@ -336,47 +344,59 @@ async function pageInstance(name, tab = 'overview') {
 
 async function tabOverview(name) {
   const ep = epoch;
-  const load = act(async () => {
-    const i = await api('/instances/' + name);
+  const i = await api('/instances/' + name);
+  if (ep !== epoch) return;
+  const body = document.getElementById('body');
+  if (!body) return;
+  const connStr = i.authEnabled
+    ? `mongodb://${esc(i.adminUser)}:<password>@<server-ip>:${i.port}/?authSource=admin`
+    : `mongodb://<server-ip>:${i.port}/`;
+
+  // Static part rendered once (the config form must survive polling);
+  // only #ov-stats is refreshed by the status poll.
+  body.innerHTML = `
+    <div class="grid cols-4" id="ov-stats"></div>
+    <div class="card">
+      <h2>Controls</h2>
+      <div class="flex">
+        <button onclick="h.instAction('${name}','start')">Start</button>
+        <button onclick="h.instAction('${name}','restart')">Restart</button>
+        <button onclick="h.instAction('${name}','stop')">Stop</button>
+        <button class="danger right" onclick="h.deleteInstance('${name}')">Delete instance…</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Network configuration</h2>
+      <div class="row">
+        <label><span class="lbl">Port</span><input id="cfg-port" type="number" value="${i.port}" /></label>
+        <label><span class="lbl">Bind IP (comma separated; 0.0.0.0 = all)</span><input id="cfg-bind" value="${esc(i.bindIp)}" /></label>
+        <button class="primary" onclick="h.saveConfig('${name}')">Save & restart</button>
+      </div>
+      <div class="muted mt">Remember to also open the port for allowed client IPs on the <a href="#/firewall">Firewall</a> page.</div>
+    </div>
+    <div class="card">
+      <h2>Connection string</h2>
+      <code>${connStr}</code>
+      <div class="muted mt">systemd unit: <code>mongopilot-${esc(name)}.service</code></div>
+    </div>`;
+
+  const renderStats = (inst) => {
+    const el = document.getElementById('ov-stats');
+    if (!el) return;
+    el.innerHTML = `
+      <div class="card stat"><div class="label">Status</div><div class="value">${badge(inst.status.state)}</div><div class="sub">${inst.status.pid ? 'pid ' + inst.status.pid : ''}</div></div>
+      <div class="card stat"><div class="label">Version</div><div class="value">${esc(inst.version)}</div></div>
+      <div class="card stat"><div class="label">Memory</div><div class="value">${fmtBytes(inst.status.memoryBytes)}</div></div>
+      <div class="card stat"><div class="label">Auth</div><div class="value">${inst.authEnabled ? '<span class="badge ok">enabled</span>' : '<span class="badge warn">open</span>'}</div></div>`;
+  };
+  renderStats(i);
+
+  const poll = act(async () => {
+    const inst = await api('/instances/' + name);
     if (ep !== epoch) return;
-    const body = document.getElementById('body');
-    if (!body) return;
-    const connStr = i.authEnabled
-      ? `mongodb://${esc(i.adminUser)}:<password>@<server-ip>:${i.port}/?authSource=admin`
-      : `mongodb://<server-ip>:${i.port}/`;
-    body.innerHTML = `
-      <div class="grid cols-4">
-        <div class="card stat"><div class="label">Status</div><div class="value">${badge(i.status.state)}</div><div class="sub">${i.status.pid ? 'pid ' + i.status.pid : ''}</div></div>
-        <div class="card stat"><div class="label">Version</div><div class="value">${esc(i.version)}</div></div>
-        <div class="card stat"><div class="label">Memory</div><div class="value">${fmtBytes(i.status.memoryBytes)}</div></div>
-        <div class="card stat"><div class="label">Auth</div><div class="value">${i.authEnabled ? '<span class="badge ok">enabled</span>' : '<span class="badge warn">open</span>'}</div></div>
-      </div>
-      <div class="card">
-        <h2>Controls</h2>
-        <div class="flex">
-          <button onclick="h.instAction('${name}','start')">Start</button>
-          <button onclick="h.instAction('${name}','restart')">Restart</button>
-          <button onclick="h.instAction('${name}','stop')">Stop</button>
-          <button class="danger right" onclick="h.deleteInstance('${name}')">Delete instance…</button>
-        </div>
-      </div>
-      <div class="card">
-        <h2>Network configuration</h2>
-        <div class="row">
-          <label><span class="lbl">Port</span><input id="cfg-port" type="number" value="${i.port}" /></label>
-          <label><span class="lbl">Bind IP (comma separated; 0.0.0.0 = all)</span><input id="cfg-bind" value="${esc(i.bindIp)}" /></label>
-          <button class="primary" onclick="h.saveConfig('${name}')">Save & restart</button>
-        </div>
-        <div class="muted mt">Remember to also open the port for allowed client IPs on the <a href="#/firewall">Firewall</a> page.</div>
-      </div>
-      <div class="card">
-        <h2>Connection string</h2>
-        <code>${connStr}</code>
-        <div class="muted mt">systemd unit: <code>mongopilot-${esc(name)}.service</code></div>
-      </div>`;
+    renderStats(inst);
   });
-  await load();
-  pollTimer = setInterval(load, 8000);
+  pollTimer = setInterval(poll, 8000);
 }
 
 const COMMON_ROLES = ['read', 'readWrite', 'dbAdmin', 'dbOwner', 'userAdmin', 'readAnyDatabase', 'readWriteAnyDatabase', 'dbAdminAnyDatabase', 'userAdminAnyDatabase', 'clusterMonitor', 'backup', 'restore', 'root'];
