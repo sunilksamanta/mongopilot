@@ -19,9 +19,12 @@ curl -fsSL https://raw.githubusercontent.com/sunilksamanta/mongopilot/main/insta
 The installer detects your distro, installs Node.js if needed, fetches MongoPilot, registers a systemd service, opens the panel port in your firewall and prints your login URL:
 
 ```
-   ╔╦╗┌─┐┌┐┌┌─┐┌─┐ ╔═╗┬┬  ┌─┐┌┬┐
-   ║║║│ ││││││ ┬│ │ ╠═╝││  │ │ │
-   ╩ ╩└─┘┘└┘└─┘└─┘ ╩  ┴┴─┘└─┘ ┴
+    __  __                         ____  _ _       _
+   |  \/  | ___  _ __   __ _  ___ |  _ \(_) | ___ | |_
+   | |\/| |/ _ \| '_ \ / _` |/ _ \| |_) | | |/ _ \| __|
+   | |  | | (_) | | | | (_| | (_) |  __/| | | (_) | |_
+   |_|  |_|\___/|_| |_|\__, |\___/|_|   |_|_|\___/ \__|
+                       |___/
    self-hosted MongoDB installer & management panel
 
 [1/7] Detecting operating system
