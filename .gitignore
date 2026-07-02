@@ -1,0 +1,4 @@
+node_modules/
+dev-data/
+*.log
+.DS_Store
