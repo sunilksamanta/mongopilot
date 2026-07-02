@@ -67,7 +67,7 @@ function badge(st) {
   return `<span class="badge ${map[st] || 'muted'}">${esc(st)}</span>`;
 }
 
-function drawChart(canvas, values, { color = '#4f8ef7', format = (v) => String(Math.round(v)) } = {}) {
+function drawChart(canvas, values, { color = '#5b9dff', format = (v) => String(Math.round(v)) } = {}) {
   const dpr = window.devicePixelRatio || 1;
   const W = (canvas.width = canvas.clientWidth * dpr);
   const H = (canvas.height = canvas.clientHeight * dpr);
@@ -75,7 +75,7 @@ function drawChart(canvas, values, { color = '#4f8ef7', format = (v) => String(M
   ctx.clearRect(0, 0, W, H);
   const pts = values.filter((v) => v != null && !isNaN(v));
   if (pts.length < 2) {
-    ctx.fillStyle = '#667';
+    ctx.fillStyle = '#5d6980';
     ctx.font = `${12 * dpr}px sans-serif`;
     ctx.fillText('collecting data…', 10 * dpr, 20 * dpr);
     return;
@@ -95,7 +95,7 @@ function drawChart(canvas, values, { color = '#4f8ef7', format = (v) => String(M
   ctx.closePath();
   ctx.fillStyle = color + '22';
   ctx.fill();
-  ctx.fillStyle = '#8b93a7';
+  ctx.fillStyle = '#98a2b8';
   ctx.font = `${11 * dpr}px sans-serif`;
   ctx.fillText(format(max), pad, 13 * dpr);
   ctx.fillText(format(min), pad, H - 8 * dpr);
@@ -105,6 +105,43 @@ function val(id) {
   const el = document.getElementById(id);
   return el ? el.value.trim() : '';
 }
+
+/* ---------------- icons (inline SVG, stroke style) ---------------- */
+
+const ICONS = {
+  gauge: '<path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>',
+  database: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3"/>',
+  layers: '<path d="m12 2-10 5 10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/>',
+  shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+  archive: '<rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>',
+  sliders: '<line x1="21" y1="4" x2="14" y2="4"/><line x1="10" y1="4" x2="3" y2="4"/><line x1="21" y1="12" x2="12" y2="12"/><line x1="8" y1="12" x2="3" y2="12"/><line x1="21" y1="20" x2="16" y2="20"/><line x1="12" y1="20" x2="3" y2="20"/><line x1="14" y1="2" x2="14" y2="6"/><line x1="8" y1="10" x2="8" y2="14"/><line x1="16" y1="18" x2="16" y2="22"/>',
+  alert: '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+  chevron: '<polyline points="9 18 15 12 9 6"/>',
+};
+
+function icon(name, cls = '') {
+  return `<svg class="icon${cls ? ' ' + cls : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
+}
+
+/* brand mark: navigation arrow on the MongoDB-green tile */
+const MARK = `<svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#00ED64"/><path d="M16 7.2 23 21.6l-7-3.9-7 3.9z" fill="#0A0D13"/></svg>`;
+
+function callout(kind, html) {
+  return `<div class="callout ${kind}">${icon('alert')}<div>${html}</div></div>`;
+}
+
+/* every table gets a horizontal-scroll wrapper so wide data never breaks
+   the layout on narrow screens; pages just render plain <table> markup */
+new MutationObserver(() => {
+  APP.querySelectorAll('table').forEach((t) => {
+    if (!t.parentElement.classList.contains('table-wrap')) {
+      const w = document.createElement('div');
+      w.className = 'table-wrap';
+      t.parentNode.insertBefore(w, t);
+      w.appendChild(t);
+    }
+  });
+}).observe(APP, { childList: true, subtree: true });
 
 /* poll a background job until it finishes; streams its log into an element */
 async function watchJob(jobId, logElId, onDone) {
@@ -125,24 +162,30 @@ async function watchJob(jobId, logElId, onDone) {
 /* ---------------- layout & routing ---------------- */
 
 const NAV = [
-  ['dashboard', 'Dashboard'],
-  ['instances', 'Instances'],
-  ['versions', 'Versions'],
-  ['firewall', 'Firewall'],
-  ['backups', 'Backups'],
-  ['settings', 'Settings'],
+  ['dashboard', 'Dashboard', 'gauge'],
+  ['instances', 'Instances', 'database'],
+  ['versions', 'Versions', 'layers'],
+  ['firewall', 'Firewall', 'shield'],
+  ['backups', 'Backups', 'archive'],
+  ['settings', 'Settings', 'sliders'],
 ];
 
 function layout(active, content) {
   APP.innerHTML = `
     <div class="shell">
-      <div class="sidebar">
-        <div class="logo">🍃 Mongo<span>Pilot</span></div>
-        ${NAV.map(([k, label]) => `<a class="nav-item ${k === active ? 'active' : ''}" href="#/${k}">${label}</a>`).join('')}
+      <aside class="sidebar">
+        <a class="brand" href="#/dashboard">${MARK}<span class="brand-name">Mongo<em>Pilot</em></span></a>
+        ${NAV.map(([k, label, ic]) => `<a class="nav-item ${k === active ? 'active' : ''}" href="#/${k}">${icon(ic)}<span>${label}</span></a>`).join('')}
         <div class="spacer"></div>
-        <div class="whoami">Signed in as <b>${esc(who)}</b><br/><a href="#" onclick="h.logout();return false">Log out</a></div>
-      </div>
-      <div class="main">${content}</div>
+        <div class="whoami">
+          <div class="avatar">${esc((who || '?').slice(0, 1))}</div>
+          <div class="who-meta">
+            <span class="who-name">${esc(who)}</span>
+            <a href="#" class="who-out" onclick="h.logout();return false">Sign out</a>
+          </div>
+        </div>
+      </aside>
+      <main class="main">${content}</main>
     </div>`;
 }
 
@@ -172,10 +215,11 @@ function renderLogin() {
   clearInterval(pollTimer);
   APP.innerHTML = `
     <div class="login-wrap"><div class="login-box card">
-      <h1>🍃 Mongo<span style="color:var(--accent)">Pilot</span></h1>
+      <div class="login-brand">${MARK}<span>Mongo<em>Pilot</em></span></div>
+      <p class="login-sub">MongoDB control panel</p>
       <label><span class="lbl">Username</span><input id="l-user" autocomplete="username" /></label>
       <label><span class="lbl">Password</span><input id="l-pass" type="password" autocomplete="current-password" /></label>
-      <button class="primary" style="width:100%" onclick="h.login()">Sign in</button>
+      <button class="primary" style="width:100%;margin-top:6px" onclick="h.login()">Sign in</button>
     </div></div>`;
   document.getElementById('l-pass').addEventListener('keydown', (e) => e.key === 'Enter' && h.login());
   document.getElementById('l-user').focus();
@@ -184,7 +228,7 @@ function renderLogin() {
 /* ---------------- pages ---------------- */
 
 async function pageDashboard() {
-  layout('dashboard', `<h1>Dashboard</h1><div id="body" class="muted">Loading…</div>`);
+  layout('dashboard', `<h1>Dashboard</h1><p class="page-sub">Server health and MongoDB instances at a glance.</p><div id="body" class="muted">Loading…</div>`);
   const ep = epoch;
   const load = act(async () => {
     const [info, metrics, insts] = await Promise.all([api('/system'), api('/system/metrics'), api('/instances')]);
@@ -194,7 +238,7 @@ async function pageDashboard() {
     const body = document.getElementById('body');
     if (!body) return;
     body.innerHTML = `
-      ${info.app.devMode ? `<div class="card" style="border-color:var(--warn)">⚠️ <b>Dev mode</b> — running without <code>/etc/mongopilot/config.json</code>. Instance/firewall operations need a Linux server.</div>` : ''}
+      ${info.app.devMode ? callout('warn', `<b>Dev mode</b> — running without <code>/etc/mongopilot/config.json</code>. Instance/firewall operations need a Linux server.`) : ''}
       <div class="grid cols-4">
         <div class="card stat"><div class="label">CPU</div><div class="value">${last.cpuPct ?? '—'}%</div><div class="sub">load ${last.load?.toFixed(2) ?? '—'} · ${info.os.cpus} cores</div></div>
         <div class="card stat"><div class="label">Memory</div><div class="value">${last.memTotal ? Math.round((1 - last.memFree / last.memTotal) * 100) + '%' : '—'}</div><div class="sub">${fmtBytes(last.memTotal - last.memFree)} / ${fmtBytes(last.memTotal)}</div></div>
@@ -212,7 +256,7 @@ async function pageDashboard() {
             <td>${badge(i.status.state)}</td>
             <td>${i.authEnabled ? '<span class="badge ok">enabled</span>' : '<span class="badge warn">open</span>'}</td>
             <td>${fmtBytes(i.status.memoryBytes)}</td>
-            <td><a href="#/instance/${i.name}">manage →</a></td>
+            <td><a class="rowlink" href="#/instance/${i.name}">Manage${icon('chevron')}</a></td>
           </tr>`).join('')}
         </tbody></table>`}
       </div>
@@ -220,15 +264,15 @@ async function pageDashboard() {
         <div class="card"><h2>CPU %</h2><canvas class="chart" id="c-cpu"></canvas></div>
         <div class="card"><h2>Memory used</h2><canvas class="chart" id="c-mem"></canvas></div>
       </div>`;
-    drawChart(document.getElementById('c-cpu'), metrics.map((m) => m.cpuPct), { color: '#4f8ef7', format: (v) => Math.round(v) + '%' });
-    drawChart(document.getElementById('c-mem'), metrics.map((m) => m.memTotal - m.memFree), { color: '#21ba6b', format: fmtBytes });
+    drawChart(document.getElementById('c-cpu'), metrics.map((m) => m.cpuPct), { color: '#5b9dff', format: (v) => Math.round(v) + '%' });
+    drawChart(document.getElementById('c-mem'), metrics.map((m) => m.memTotal - m.memFree), { color: '#00ed64', format: fmtBytes });
   });
   await load();
   pollTimer = setInterval(load, 10000);
 }
 
 async function pageVersions() {
-  layout('versions', `<h1>MongoDB Versions</h1><div id="body" class="muted">Loading catalog…</div>`);
+  layout('versions', `<h1>MongoDB Versions</h1><p class="page-sub">Install Community releases from official tarballs. Multiple versions run side by side.</p><div id="body" class="muted">Loading catalog…</div>`);
   const ep = epoch;
   const data = await api('/versions');
   if (ep !== epoch) return;
@@ -238,7 +282,7 @@ async function pageVersions() {
   const seriesKeys = Object.keys(bySeries).sort((a, b) => parseFloat(b) - parseFloat(a));
 
   body.innerHTML = `
-    ${data.catalogError ? `<div class="card" style="border-color:var(--danger)">Could not load the release catalog: ${esc(data.catalogError)}</div>` : ''}
+    ${data.catalogError ? callout('danger', `Could not load the release catalog: ${esc(data.catalogError)}`) : ''}
     <div class="card">
       <h2>Installed</h2>
       ${data.installed.length === 0 ? '<div class="muted">Nothing installed yet. Pick a series below.</div>' : `
@@ -272,6 +316,7 @@ async function pageVersions() {
 
 async function pageInstances() {
   layout('instances', `<h1>Instances</h1>
+    <p class="page-sub">Each instance is a native <code>mongod</code> process with its own data directory, port and systemd unit.</p>
     <div class="card" id="create-card"><h2>New instance</h2><div class="muted">Loading…</div></div>
     <div class="card"><h2>Existing instances</h2><div id="inst-list" class="muted">Loading…</div></div>`);
   const ep = epoch;
@@ -408,9 +453,10 @@ async function tabSecurity(name) {
   const body = document.getElementById('body');
   if (!i.authEnabled) {
     body.innerHTML = `
-      <div class="card" style="border-color:var(--warn)">
-        <h2>⚠️ Authentication is disabled</h2>
-        <p class="muted">This instance accepts unauthenticated connections. Create the first admin (root) user — MongoPilot will then enable <code>security.authorization</code> and restart the instance.</p>
+      ${callout('warn', `<b>Authentication is disabled</b> — this instance accepts unauthenticated connections.`)}
+      <div class="card">
+        <h2>Enable authentication</h2>
+        <p class="muted">Create the first admin (root) user — MongoPilot will then enable <code>security.authorization</code> and restart the instance.</p>
         <div class="row">
           <label><span class="lbl">Admin username</span><input id="au-user" value="admin" /></label>
           <label><span class="lbl">Admin password (8+ chars)</span><input id="au-pass" type="password" /></label>
@@ -494,10 +540,10 @@ async function tabMetrics(name) {
   const load = act(async () => {
     const m = await api(`/instances/${name}/metrics`);
     if (ep !== epoch || !document.getElementById('m-conn')) return;
-    drawChart(document.getElementById('m-conn'), m.map((p) => p.connections), { color: '#4f8ef7' });
-    drawChart(document.getElementById('m-mem'), m.map((p) => p.residentMB), { color: '#21ba6b' });
-    drawChart(document.getElementById('m-read'), m.map((p) => p.opsRead), { color: '#d9a520', format: (v) => v.toFixed(1) });
-    drawChart(document.getElementById('m-write'), m.map((p) => p.opsWrite), { color: '#e5534b', format: (v) => v.toFixed(1) });
+    drawChart(document.getElementById('m-conn'), m.map((p) => p.connections), { color: '#5b9dff' });
+    drawChart(document.getElementById('m-mem'), m.map((p) => p.residentMB), { color: '#00ed64' });
+    drawChart(document.getElementById('m-read'), m.map((p) => p.opsRead), { color: '#f0b429', format: (v) => v.toFixed(1) });
+    drawChart(document.getElementById('m-write'), m.map((p) => p.opsWrite), { color: '#f2555a', format: (v) => v.toFixed(1) });
   });
   await load();
   pollTimer = setInterval(load, 15000);
@@ -513,7 +559,7 @@ async function tabBackup(name) {
   if (ep !== epoch) return;
   const body = document.getElementById('body');
   body.innerHTML = `
-    ${!settings ? `<div class="card" style="border-color:var(--warn)">⚠️ S3 is not configured yet — set bucket & credentials on the <a href="#/backups">Backups</a> page first.</div>` : `
+    ${!settings ? callout('warn', `S3 is not configured yet — set bucket &amp; credentials on the <a href="#/backups">Backups</a> page first.`) : `
     <div class="card"><h2>Destination</h2><code>s3://${esc(settings.bucket)}/${esc(settings.prefix)}/${esc(name)}/</code> <span class="muted">(${esc(settings.region)})</span></div>`}
     <div class="card">
       <h2>Schedule</h2>
@@ -554,7 +600,7 @@ async function tabLogs(name) {
 }
 
 async function pageFirewall() {
-  layout('firewall', `<h1>Firewall / IP allowlist</h1><div id="body" class="muted">Loading…</div>`);
+  layout('firewall', `<h1>Firewall</h1><p class="page-sub">Manage the IP allowlist for your MongoDB ports through <code>ufw</code> or <code>firewalld</code>.</p><div id="body" class="muted">Loading…</div>`);
   const ep = epoch;
   const fw = await api('/firewall');
   if (ep !== epoch) return;
@@ -579,7 +625,7 @@ async function pageFirewall() {
 }
 
 async function pageBackups() {
-  layout('backups', `<h1>Backups (AWS S3)</h1><div id="body" class="muted">Loading…</div>`);
+  layout('backups', `<h1>Backups</h1><p class="page-sub">Compressed <code>mongodump</code> archives uploaded to AWS S3, with per-instance schedules and retention.</p><div id="body" class="muted">Loading…</div>`);
   const ep = epoch;
   const [settings, history] = await Promise.all([api('/backups/settings'), api('/backups/history')]);
   if (ep !== epoch) return;
@@ -615,7 +661,7 @@ async function pageBackups() {
 }
 
 async function pageSettings() {
-  layout('settings', `<h1>Settings</h1><div id="body" class="muted">Loading…</div>`);
+  layout('settings', `<h1>Settings</h1><p class="page-sub">Panel account and system information.</p><div id="body" class="muted">Loading…</div>`);
   const ep = epoch;
   const info = await api('/system');
   if (ep !== epoch) return;

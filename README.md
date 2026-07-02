@@ -1,32 +1,70 @@
-# 🍃 MongoPilot
+# MongoPilot
 
-Self-hosted **MongoDB installer & management panel** for Linux servers (Ubuntu, Debian, CentOS/RHEL/Rocky/Alma, Amazon Linux). One shell script installs a web UI from which you can install MongoDB Community versions, run **multiple native instances** side by side (no Docker), manage auth/users/databases, control firewall access, monitor everything, and back up to AWS S3.
+**Self-hosted MongoDB installer & management panel for Linux servers.**
 
-## Features
+One command installs a web UI from which you can install MongoDB Community versions, run multiple native instances side by side (no Docker), manage authentication, users and databases, control firewall access, monitor everything live, and back up to AWS S3.
 
-- **One-command install** — `sudo ./install.sh` prompts for panel credentials + port, installs Node.js, and registers a systemd service.
-- **MongoDB version catalog** — lists Community releases (5.0 → 8.x) that have builds for your exact distro/arch, installed from official MongoDB tarballs.
-- **Multiple versions & instances natively** — versions live in `/opt/mongopilot/mongodb/<version>/`; each instance gets its own data dir, `mongod.conf`, port and systemd unit (`mongopilot-<name>.service`). Run 6.0 and 8.0 side by side.
-- **Security** — one-click enable auth (creates root user via localhost exception, flips `security.authorization`, restarts), user CRUD with roles, database create/drop.
-- **Network access** — per-instance `bindIp` management + IP allowlisting through `ufw` or `firewalld` (port + source CIDR).
-- **Monitoring** — CPU/memory/disk for the server; connections, ops/sec, resident memory per instance (15s sampling, 1h window, live charts).
-- **Backups to S3** — `mongodump --archive --gzip` → multipart upload to your bucket, cron scheduling per instance, retention (keep last N), history.
+Works on Ubuntu, Debian, CentOS, RHEL, Rocky, AlmaLinux, Amazon Linux and Fedora.
 
-## Install (on the server)
+---
+
+## Install
+
+Run this on your server — that's it:
 
 ```bash
-git clone <your-repo-url> mongopilot   # or scp the folder to the server
+curl -fsSL https://raw.githubusercontent.com/sunilksamanta/mongopilot/main/install.sh | sudo bash
+```
+
+The installer detects your distro, installs Node.js if needed, fetches MongoPilot, registers a systemd service, opens the panel port in your firewall and prints your login URL:
+
+```
+   ╔╦╗┌─┐┌┐┌┌─┐┌─┐ ╔═╗┬┬  ┌─┐┌┬┐
+   ║║║│ ││││││ ┬│ │ ╠═╝││  │ │ │
+   ╩ ╩└─┘┘└┘└─┘└─┘ ╩  ┴┴─┘└─┘ ┴
+   self-hosted MongoDB installer & management panel
+
+[1/7] Detecting operating system
+      ✓ Ubuntu 24.04 LTS (debian family, x86_64)
+[2/7] Configuration
+      ✓ Panel: user 'admin', port 8455
+...
+  ┌──────────────────────────────────────────────────────┐
+  │ MongoPilot is up and running                         │
+  │ URL       http://203.0.113.10:8455                   │
+  │ Username  admin                                      │
+  │ Service   systemctl status mongopilot                │
+  └──────────────────────────────────────────────────────┘
+```
+
+It prompts for the admin username, password and port. When no terminal is attached (CI, cloud-init), it falls back to sane defaults and generates a random password, printed once at the end.
+
+**Non-interactive / scripted install:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sunilksamanta/mongopilot/main/install.sh \
+  | sudo MONGOPILOT_ADMIN_USER=admin MONGOPILOT_ADMIN_PASS='S3cureP@ss' MONGOPILOT_PORT=8455 bash
+```
+
+**From a clone:**
+
+```bash
+git clone https://github.com/sunilksamanta/mongopilot.git
 cd mongopilot
 sudo ./install.sh
 ```
 
-Non-interactive:
-
-```bash
-MONGOPILOT_ADMIN_USER=admin MONGOPILOT_ADMIN_PASS='S3cureP@ss' MONGOPILOT_PORT=8455 sudo -E ./install.sh
-```
-
 Then open `http://<server-ip>:8455`, log in, go to **Versions** → install a MongoDB version → **Instances** → create an instance → enable auth on its **Security** tab.
+
+## Features
+
+- **One-command install** — a single script sets up Node.js, the panel and a systemd service on any major Linux distro.
+- **MongoDB version catalog** — lists Community releases (5.0 → 8.x) that have builds for your exact distro/arch, installed from official MongoDB tarballs.
+- **Multiple versions & instances, natively** — versions live in `/opt/mongopilot/mongodb/<version>/`; each instance gets its own data dir, `mongod.conf`, port and systemd unit (`mongopilot-<name>.service`). Run 6.0 and 8.0 side by side.
+- **Security** — one-click enable auth (creates the root user via the localhost exception, flips `security.authorization`, restarts), user CRUD with roles, database create/drop.
+- **Network access** — per-instance `bindIp` management plus IP allowlisting through `ufw` or `firewalld` (port + source CIDR).
+- **Monitoring** — CPU/memory/disk for the server; connections, ops/sec and resident memory per instance (15 s sampling, 1 h window, live charts).
+- **Backups to S3** — `mongodump --archive --gzip` → multipart upload to your bucket, cron scheduling per instance, retention (keep last N), full history.
 
 ## Layout on the server
 
@@ -38,6 +76,24 @@ Then open `http://<server-ip>:8455`, log in, go to **Versions** → install a Mo
 | `/var/lib/mongopilot/state.json` | instance registry, S3 settings (secrets AES-256-GCM encrypted), backup history |
 | `/etc/systemd/system/mongopilot.service` | the panel itself |
 | `/etc/systemd/system/mongopilot-<name>.service` | one per MongoDB instance (runs as user `mongopilot`) |
+
+## Updating
+
+Re-run the installer. It replaces the application files and keeps `/etc/mongopilot/config.json`, your instances and all data untouched:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sunilksamanta/mongopilot/main/install.sh | sudo bash
+```
+
+## Uninstall
+
+```bash
+sudo systemctl disable --now mongopilot
+sudo rm -f /etc/systemd/system/mongopilot.service
+sudo rm -rf /opt/mongopilot /etc/mongopilot
+# Your MongoDB instances and data live in /var/lib/mongopilot — remove only if you are sure:
+# sudo rm -rf /var/lib/mongopilot && sudo userdel mongopilot
+```
 
 ## Local development (any OS)
 
@@ -54,8 +110,12 @@ Without `/etc/mongopilot/config.json` the app runs in **dev mode** (state under 
 - The panel port is plain HTTP. For internet-facing servers put it behind a reverse proxy with TLS (Caddy/nginx + Let's Encrypt) or restrict the port to your IP in the firewall.
 - New instances bind to `127.0.0.1` by default. Enable auth **before** widening `bindIp`.
 
-## Roadmap ideas
+## Roadmap
 
 - Replica set setup across instances/servers
 - Restore-from-S3 flow (mongorestore)
 - TLS for mongod instances, alerting (email/Slack), slow query views
+
+## License
+
+MIT
