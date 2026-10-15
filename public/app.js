@@ -751,7 +751,7 @@ async function pageReplSet(name) {
     <h1>Replica set: <span class="mono">${esc(name)}</span></h1>
     <div id="body" class="muted">Loading…</div>`);
   const ep = epoch;
-  const [rs, insts] = await Promise.all([api('/replsets/' + name), api('/instances')]);
+  const [rs, insts, hosts] = await Promise.all([api('/replsets/' + name), api('/instances'), api('/replsets/hosts')]);
   if (ep !== epoch) return;
   const body = document.getElementById('body');
   const remoteOk = !isLoopbackHost(rs.advertiseHost);
@@ -780,8 +780,24 @@ async function pageReplSet(name) {
     <div class="card">
       <h2>Connection string</h2>
       <code id="rs-conn">—</code>
-      <div class="muted mt">Drivers discover the primary automatically and fail over on their own. ${isLoopbackHost(rs.advertiseHost) ? 'Members advertise a loopback address, so this string only works for apps on this server.' : ''}</div>
+      ${isLoopbackHost(rs.advertiseHost)
+        ? `<div class="mt">${callout('warn', '<b>Only apps on this server can connect.</b> Members advertise a loopback address, so a driver on another machine would be sent to its own localhost. To connect from anywhere else, change <b>Network access</b> below.')}</div>`
+        : '<div class="muted mt">Drivers discover the primary automatically and fail over on their own.</div>'}
     </div>
+    ${rs.joined ? '' : `<div class="card">
+      <h2>Network access</h2>
+      <datalist id="rs-hosts">${[...new Set(['127.0.0.1', ...hosts.addresses.map((a) => a.address), hosts.hostname])].map((x) => `<option value="${esc(x)}"></option>`).join('')}</datalist>
+      <div class="row">
+        <label><span class="lbl">Bind IP (where members listen)</span><input id="na-bind" value="${esc(rs.bindIp)}" /></label>
+        <label><span class="lbl">Advertised host (what clients connect to)</span><input id="na-host" list="rs-hosts" value="${esc(rs.advertiseHost)}" /></label>
+        <button class="primary" onclick="h.rsNetwork('${esc(name)}')">Apply</button>
+      </div>
+      <div class="muted mt">
+        <b>Reachable from other machines</b>: bind <code>0.0.0.0</code> and advertise this server's public IP${hosts.addresses.length ? ` (e.g. <code>${esc(hosts.addresses[0].address)}</code>)` : ''} or a DNS name pointing to it. Requires authentication.
+        <b>This server only</b>: <code>127.0.0.1</code> for both.
+        Members restart one at a time, so the set stays available and no data is touched. Then allow the ports on the <a href="#/firewall">Firewall</a> page, ideally only for the IPs that need them.
+      </div>
+    </div>`}
     ${rs.hasKeyFile ? `<div class="card">
       <h2>Keyfile</h2>
       <p class="muted">Members authenticate to each other with this shared secret. You need it when joining a member from another server. Treat it like a password.</p>
@@ -1140,6 +1156,14 @@ window.h = {
     const purge = isLocal ? confirm('ALSO DELETE ITS DATA DIRECTORY?\n\nOK = delete data permanently\nCancel = keep data on disk') : false;
     const r = await api(`/replsets/${name}/members/remove`, { method: 'POST', body: { host, purge } });
     h.startJob(r.jobId);
+  }),
+
+  rsNetwork: act(async (name) => {
+    const bindIp = val('na-bind');
+    const advertiseHost = val('na-host');
+    if (!confirm(`Change network access for "${name}"?\n\nBind IP: ${bindIp}\nAdvertised host: ${advertiseHost}\n\nMembers restart one at a time; the set stays available.`)) return;
+    const r = await api(`/replsets/${name}/network`, { method: 'PUT', body: { bindIp, advertiseHost } });
+    h.startJob(r.jobId, (job) => { if (job.status === 'done') route(); });
   }),
 
   rsStepDown: act(async (name) => {

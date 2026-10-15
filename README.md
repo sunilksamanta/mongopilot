@@ -78,6 +78,7 @@ From **Replica Sets** in the panel:
 |---|---|
 | Transactions / change streams for apps on this server | Create, 1 or 3 members, bind and advertised host `127.0.0.1` |
 | High availability, apps on other machines | Create, 3 members, bind `0.0.0.0`, advertised host = this server's private IP or DNS name, auth on, open the ports on **Firewall** |
+| Started local-only, now need outside access | Replica set page → **Network access**: bind `0.0.0.0`, advertised host = the server's IP. Members restart one at a time, no downtime |
 | Keep an existing instance's data | Convert an existing instance, then **Add member** |
 | Members on several servers | On server A: create the set (advertise a reachable address). On server B: **Join a replica set** with the same set name, A's keyfile (shown on the set's page) and the same admin credentials. Back on A: **Add member → On another server** with `B-address:port`. |
 

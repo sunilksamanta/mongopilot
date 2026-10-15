@@ -52,6 +52,11 @@ router.post('/:name/stepdown', asyncHandler(async (req, res) => {
   res.json({ ok: true });
 }));
 
+router.put('/:name/network', asyncHandler(async (req, res) => {
+  const job = await replsets.updateNetwork(req.params.name, req.body || {});
+  res.json({ jobId: job.id });
+}));
+
 router.post('/:name/auth', asyncHandler(async (req, res) => {
   const { username, password } = req.body || {};
   res.json(await replsets.enableAuth(req.params.name, username, password));

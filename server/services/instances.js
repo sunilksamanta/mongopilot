@@ -258,4 +258,5 @@ module.exports = {
   unitName,
   writeArtifacts,
   requireLinux,
+  effectiveBindIp,
 };
