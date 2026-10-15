@@ -222,8 +222,11 @@ Environment=NODE_ENV=production
 WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
-systemctl enable --now mongopilot
-ok "mongopilot.service enabled and started"
+systemctl enable mongopilot >/dev/null 2>&1
+# restart (not just start) so an upgrade loads the new code; MongoDB instances
+# have their own units and keep running
+systemctl restart mongopilot
+ok "mongopilot.service enabled and (re)started"
 
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
   ufw allow "${PORT}/tcp" >/dev/null || true

@@ -219,6 +219,8 @@ h2 {
 .callout.warn .icon { color: var(--amber); }
 .callout.danger { border-color: rgba(242, 85, 90, 0.35); background: rgba(242, 85, 90, 0.06); }
 .callout.danger .icon { color: var(--red); }
+.callout.info { border-color: rgba(91, 157, 255, 0.35); background: rgba(91, 157, 255, 0.06); }
+.callout.info .icon { color: var(--blue); }
 
 /* ---------------- tables ---------------- */
 
@@ -241,6 +243,7 @@ tbody tr { transition: background 0.1s ease; }
 tbody tr:hover { background: rgba(255, 255, 255, 0.018); }
 tr:last-child td { border-bottom: none; }
 td.mono, .mono { font-family: var(--mono); font-size: 13px; }
+h1 .mono { font-size: inherit; }
 td { font-variant-numeric: tabular-nums; }
 
 .rowlink { display: inline-flex; align-items: center; gap: 3px; font-weight: 500; }
@@ -248,7 +251,7 @@ td { font-variant-numeric: tabular-nums; }
 
 /* ---------------- forms ---------------- */
 
-input, select {
+input, select, textarea {
   background: var(--inset);
   border: 1px solid var(--line-2);
   color: var(--text);
@@ -259,12 +262,16 @@ input, select {
   transition: border-color 0.12s ease, box-shadow 0.12s ease;
 }
 input::placeholder { color: var(--faint); }
-input:focus, select:focus {
+input:focus, select:focus, textarea:focus {
   outline: none;
   border-color: var(--green);
   box-shadow: 0 0 0 3px rgba(0, 237, 100, 0.12);
 }
 label { display: block; margin-bottom: 10px; }
+textarea { font-family: var(--mono); font-size: 12px; resize: vertical; word-break: break-all; }
+input:disabled, button:disabled { opacity: 0.5; cursor: not-allowed; }
+label.check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+label.check input { width: auto; accent-color: var(--green); }
 label .lbl {
   display: block;
   color: var(--muted);
@@ -459,7 +466,7 @@ code {
   }
   .brand { padding: 0 12px 0 0; }
   .brand .brand-name { display: none; }
-  .nav-item { padding: 8px 11px; }
+  .nav-item { padding: 8px 11px; white-space: nowrap; flex-shrink: 0; }
   .nav-item.active::before { left: 8px; right: 8px; top: auto; bottom: 0; width: auto; height: 2.5px; }
   .sidebar .whoami { border-top: none; margin: 0 0 0 auto; padding: 0 0 0 10px; }
   .who-meta { display: none; }

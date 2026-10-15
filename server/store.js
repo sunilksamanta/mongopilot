@@ -3,7 +3,7 @@ const path = require('path');
 const config = require('./config');
 
 const STATE_PATH = path.join(config.dataDir, 'state.json');
-const DEFAULTS = { instances: [], s3: null, backupHistory: [] };
+const DEFAULTS = { instances: [], replicaSets: [], s3: null, backupHistory: [] };
 
 let state;
 try {

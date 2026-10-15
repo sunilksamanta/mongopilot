@@ -4,6 +4,7 @@ const instances = require('../services/instances');
 const mongo = require('../services/mongo');
 const monitor = require('../services/monitor');
 const backup = require('../services/backup');
+const replsets = require('../services/replsets');
 const { state } = require('../store');
 
 const router = express.Router();
@@ -57,6 +58,12 @@ router.post('/:name/auth', asyncHandler(async (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password || password.length < 8) {
     return res.status(400).json({ error: 'username and a password of 8+ characters are required' });
+  }
+  const inst = instances.get(req.params.name);
+  if (inst.replSet) {
+    // every member of a set must switch to auth (and a shared keyfile) together
+    await replsets.enableAuth(inst.replSet, username, password);
+    return res.json(pub(inst));
   }
   res.json(pub(await instances.enableAuth(req.params.name, username, password)));
 }));
