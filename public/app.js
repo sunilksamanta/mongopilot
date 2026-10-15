@@ -117,6 +117,7 @@ const ICONS = {
   sliders: '<line x1="21" y1="4" x2="14" y2="4"/><line x1="10" y1="4" x2="3" y2="4"/><line x1="21" y1="12" x2="12" y2="12"/><line x1="8" y1="12" x2="3" y2="12"/><line x1="21" y1="20" x2="16" y2="20"/><line x1="12" y1="20" x2="3" y2="20"/><line x1="14" y1="2" x2="14" y2="6"/><line x1="8" y1="10" x2="8" y2="14"/><line x1="16" y1="18" x2="16" y2="22"/>',
   alert: '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
   chevron: '<polyline points="9 18 15 12 9 6"/>',
+  nodes: '<circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M10.8 7.2 6.3 15.8"/><path d="m13.2 7.2 4.5 8.6"/><path d="M7.5 18h9"/>',
 };
 
 function icon(name, cls = '') {
@@ -164,6 +165,7 @@ async function watchJob(jobId, logElId, onDone) {
 const NAV = [
   ['dashboard', 'Dashboard', 'gauge'],
   ['instances', 'Instances', 'database'],
+  ['replsets', 'Replica Sets', 'nodes'],
   ['versions', 'Versions', 'layers'],
   ['firewall', 'Firewall', 'shield'],
   ['backups', 'Backups', 'archive'],
@@ -201,6 +203,8 @@ function route() {
     versions: pageVersions,
     instances: pageInstances,
     instance: pageInstance,
+    replsets: pageReplSets,
+    replset: pageReplSet,
     firewall: pageFirewall,
     backups: pageBackups,
     settings: pageSettings,
@@ -341,12 +345,13 @@ async function pageInstances() {
     const el = document.getElementById('inst-list');
     if (!el) return;
     el.innerHTML = list.length === 0 ? '<div class="muted">None yet.</div>' : `
-      <table><thead><tr><th>Name</th><th>Version</th><th>Port</th><th>Bind</th><th>Status</th><th>Auth</th><th></th></tr></thead><tbody>
+      <table><thead><tr><th>Name</th><th>Version</th><th>Port</th><th>Bind</th><th>Replica set</th><th>Status</th><th>Auth</th><th></th></tr></thead><tbody>
         ${list.map((i) => `<tr>
           <td><a href="#/instance/${i.name}">${esc(i.name)}</a></td>
           <td class="mono">${esc(i.version)}</td>
           <td class="mono">${i.port}</td>
           <td class="mono">${esc(i.bindIp)}</td>
+          <td>${i.replSet ? `<a class="mono" href="#/replset/${esc(i.replSet)}">${esc(i.replSet)}</a>` : '<span class="muted">—</span>'}</td>
           <td>${badge(i.status.state)}</td>
           <td>${i.authEnabled ? '<span class="badge ok">on</span>' : '<span class="badge warn">off</span>'}</td>
           <td class="flex">
@@ -396,10 +401,14 @@ async function tabOverview(name) {
   const connStr = i.authEnabled
     ? `mongodb://${esc(i.adminUser)}:<password>@<server-ip>:${i.port}/?authSource=admin`
     : `mongodb://<server-ip>:${i.port}/`;
+  const rsNote = i.replSet
+    ? callout('info', `Member of replica set <a class="mono" href="#/replset/${esc(i.replSet)}">${esc(i.replSet)}</a>. Use the replica set page for its connection string, to add or remove members, or to delete it. Users and databases you change here apply to the whole set.`)
+    : '';
 
   // Static part rendered once (the config form must survive polling);
   // only #ov-stats is refreshed by the status poll.
   body.innerHTML = `
+    ${rsNote}
     <div class="grid cols-4" id="ov-stats"></div>
     <div class="card">
       <h2>Controls</h2>
@@ -407,23 +416,23 @@ async function tabOverview(name) {
         <button onclick="h.instAction('${name}','start')">Start</button>
         <button onclick="h.instAction('${name}','restart')">Restart</button>
         <button onclick="h.instAction('${name}','stop')">Stop</button>
-        <button class="danger right" onclick="h.deleteInstance('${name}')">Delete instance…</button>
+        ${i.replSet ? '' : `<button class="danger right" onclick="h.deleteInstance('${name}')">Delete instance…</button>`}
       </div>
     </div>
     <div class="card">
       <h2>Network configuration</h2>
       <div class="row">
-        <label><span class="lbl">Port</span><input id="cfg-port" type="number" value="${i.port}" /></label>
+        <label><span class="lbl">Port${i.replSet ? ' (fixed for replica set members)' : ''}</span><input id="cfg-port" type="number" value="${i.port}" ${i.replSet ? 'disabled' : ''} /></label>
         <label><span class="lbl">Bind IP (comma separated; 0.0.0.0 = all)</span><input id="cfg-bind" value="${esc(i.bindIp)}" /></label>
         <button class="primary" onclick="h.saveConfig('${name}')">Save & restart</button>
       </div>
       <div class="muted mt">Remember to also open the port for allowed client IPs on the <a href="#/firewall">Firewall</a> page.</div>
     </div>
-    <div class="card">
+    ${i.replSet ? '' : `<div class="card">
       <h2>Connection string</h2>
       <code>${connStr}</code>
-      <div class="muted mt">systemd unit: <code>mongopilot-${esc(name)}.service</code></div>
-    </div>`;
+    </div>`}
+    <div class="muted">systemd unit: <code>mongopilot-${esc(name)}.service</code></div>`;
 
   const renderStats = (inst) => {
     const el = document.getElementById('ov-stats');
@@ -456,7 +465,9 @@ async function tabSecurity(name) {
       ${callout('warn', `<b>Authentication is disabled</b> — this instance accepts unauthenticated connections.`)}
       <div class="card">
         <h2>Enable authentication</h2>
-        <p class="muted">Create the first admin (root) user — MongoPilot will then enable <code>security.authorization</code> and restart the instance.</p>
+        <p class="muted">${i.replSet
+          ? `Applies to the whole replica set <b>${esc(i.replSet)}</b>: MongoPilot creates the root user on the primary, gives every member a shared keyfile, enables <code>security.authorization</code> and restarts all members together (a few seconds of downtime).`
+          : 'Create the first admin (root) user — MongoPilot will then enable <code>security.authorization</code> and restart the instance.'}</p>
         <div class="row">
           <label><span class="lbl">Admin username</span><input id="au-user" value="admin" /></label>
           <label><span class="lbl">Admin password (8+ chars)</span><input id="au-pass" type="password" /></label>
@@ -597,6 +608,225 @@ async function tabLogs(name) {
   if (ep !== epoch) return;
   const el = document.getElementById('inst-log');
   if (el) { el.textContent = r.log || '(log file is empty)'; el.scrollTop = el.scrollHeight; }
+}
+
+/* ---------------- replica sets ---------------- */
+
+const RS_STATE_BADGE = { PRIMARY: 'ok', SECONDARY: 'info', ARBITER: 'muted', STARTUP: 'warn', STARTUP2: 'warn', RECOVERING: 'warn', ROLLBACK: 'warn' };
+
+function rsBadge(st) {
+  return `<span class="badge ${RS_STATE_BADGE[st] || 'err'}">${esc(st)}</span>`;
+}
+
+function rsHealth(rs) {
+  const st = rs.status;
+  if (!st.ok) return st.pending ? '<span class="badge warn">waiting to be added</span>' : '<span class="badge err">unreachable</span>';
+  const total = st.members.length;
+  if (!st.primary) return '<span class="badge err">no primary</span>';
+  return `<span class="badge ${st.healthy === total ? 'ok' : 'warn'}">${st.healthy}/${total} healthy</span>`;
+}
+
+function isLoopbackHost(h) {
+  return h === 'localhost' || /^127\./.test(h);
+}
+
+/* first port p where p .. p+count-1 are all unused by existing instances */
+function freePortRange(insts, count, start = 27017) {
+  const used = new Set(insts.map((i) => i.port));
+  let p = start;
+  while ([...Array(count).keys()].some((k) => used.has(p + k))) p++;
+  return p;
+}
+
+async function pageReplSets() {
+  layout('replsets', `<h1>Replica Sets</h1>
+    <p class="page-sub">Highly available MongoDB: a primary plus secondaries that hold copies of the data and take over automatically on failure. Also required for transactions and change streams.</p>
+    <div class="card"><h2>Your replica sets</h2><div id="rs-list" class="muted">Loading…</div></div>
+    <div class="card" id="job-card" style="display:none"><h2>Progress</h2><pre class="log" id="job-log"></pre></div>
+    <div id="rs-forms"></div>`);
+  const ep = epoch;
+  const [sets, vers, insts, hosts] = await Promise.all([api('/replsets'), api('/versions'), api('/instances'), api('/replsets/hosts')]);
+  if (ep !== epoch) return;
+
+  const renderList = (list) => {
+    const el = document.getElementById('rs-list');
+    if (!el) return;
+    el.innerHTML = list.length === 0 ? '<div class="muted">None yet. Create one below, or convert an existing instance.</div>' : `
+      <table><thead><tr><th>Name</th><th>Version</th><th>Members here</th><th>Primary</th><th>Health</th><th>Auth</th><th></th></tr></thead><tbody>
+        ${list.map((r) => `<tr>
+          <td><a class="mono" href="#/replset/${esc(r.name)}">${esc(r.name)}</a>${r.joined ? ' <span class="badge muted">joined</span>' : ''}</td>
+          <td class="mono">${esc(r.version)}</td>
+          <td>${r.members.map((m) => `<a class="mono" href="#/instance/${esc(m)}">${esc(m)}</a>`).join(', ') || '—'}</td>
+          <td class="mono">${esc(r.status.primary || '—')}</td>
+          <td>${rsHealth(r)}</td>
+          <td>${r.authEnabled ? '<span class="badge ok">on</span>' : '<span class="badge warn">off</span>'}</td>
+          <td><a class="rowlink" href="#/replset/${esc(r.name)}">Manage${icon('chevron')}</a></td>
+        </tr>`).join('')}
+      </tbody></table>`;
+  };
+  renderList(sets);
+
+  const lan = hosts.addresses.map((a) => a.address);
+  const hostOptions = [...new Set(['127.0.0.1', ...lan, hosts.hostname])].map((x) => `<option value="${esc(x)}"></option>`).join('');
+  const versionOpts = vers.installed.map((v) => `<option>${esc(v)}</option>`).join('');
+  const standalone = insts.filter((i) => !i.replSet);
+  const nextName = (() => { let n = sets.length; while (sets.some((r) => r.name === 'rs' + n)) n++; return 'rs' + n; })();
+
+  // forms are rendered once; the poll below only refreshes the list
+  document.getElementById('rs-forms').innerHTML = vers.installed.length === 0
+    ? `<div class="card"><h2>Create a replica set</h2><div class="muted">Install a MongoDB version first on the <a href="#/versions">Versions</a> page.</div></div>`
+    : `
+    <datalist id="rs-hosts">${hostOptions}</datalist>
+    <div class="card">
+      <h2>Create a replica set</h2>
+      <div class="row">
+        <label><span class="lbl">Replica set name</span><input id="rc-name" value="${esc(nextName)}" /></label>
+        <label><span class="lbl">Version</span><select id="rc-version">${versionOpts}</select></label>
+        <label><span class="lbl">Members</span><select id="rc-members">
+          <option value="3" selected>3 (recommended)</option><option value="5">5</option><option value="7">7</option><option value="1">1 (no redundancy)</option>
+        </select></label>
+        <label><span class="lbl">First port</span><input id="rc-port" type="number" value="${freePortRange(insts, 7)}" /></label>
+      </div>
+      <div class="row mt">
+        <label><span class="lbl">Bind IP</span><input id="rc-bind" value="127.0.0.1" onchange="h.rsBindChanged('rc')" /></label>
+        <label><span class="lbl">Advertised host (address members &amp; clients use)</span><input id="rc-host" list="rs-hosts" value="127.0.0.1" /></label>
+      </div>
+      <label class="check mt"><input type="checkbox" id="rc-auth" checked onchange="document.getElementById('rc-authrow').style.display = this.checked ? '' : 'none'" /> Enable authentication (keyfile between members + root user)</label>
+      <div class="row" id="rc-authrow">
+        <label><span class="lbl">Admin username</span><input id="rc-user" value="admin" autocomplete="off" /></label>
+        <label><span class="lbl">Admin password (8+ chars)</span><input id="rc-pass" type="password" autocomplete="new-password" /></label>
+      </div>
+      <div class="flex mt"><button class="primary" onclick="h.createReplSet()">Create replica set</button></div>
+      <div class="muted mt">
+        Members run on this server on consecutive ports (<code>&lt;name&gt;-1</code>, <code>&lt;name&gt;-2</code>, …), each with its own data directory and systemd unit.<br>
+        <b>Apps on this server only</b>: keep bind and advertised host at <code>127.0.0.1</code>.
+        <b>Apps or members on other servers</b>: bind <code>0.0.0.0</code> and advertise this server's private IP${lan.length ? ` (e.g. <code>${esc(lan[0])}</code>)` : ''} or DNS name, enable auth, and open the ports on the <a href="#/firewall">Firewall</a> page.
+      </div>
+    </div>
+    <div class="grid cols-2">
+      <div class="card">
+        <h2>Convert an existing instance</h2>
+        ${standalone.length === 0 ? '<div class="muted">No standalone instances to convert.</div>' : `
+        <div class="row">
+          <label><span class="lbl">Instance</span><select id="cv-inst">${standalone.map((i) => `<option value="${esc(i.name)}">${esc(i.name)} (port ${i.port})</option>`).join('')}</select></label>
+          <label><span class="lbl">Replica set name</span><input id="cv-name" value="${esc(nextName)}" /></label>
+        </div>
+        <div class="row mt">
+          <label><span class="lbl">Advertised host</span><input id="cv-host" list="rs-hosts" value="127.0.0.1" /></label>
+          <button class="primary" onclick="h.convertReplSet()">Convert</button>
+        </div>
+        <div class="muted mt">Restarts the instance as a single-member replica set. Its data, users and backups stay as they are. Then add members from the replica set page.</div>`}
+      </div>
+      <div class="card">
+        <h2>Join a replica set on another server</h2>
+        <div class="row">
+          <label><span class="lbl">Replica set name</span><input id="jn-name" placeholder="e.g. rs0" /></label>
+          <label><span class="lbl">Version</span><select id="jn-version">${versionOpts}</select></label>
+          <label><span class="lbl">Port</span><input id="jn-port" type="number" value="${freePortRange(insts, 1)}" /></label>
+        </div>
+        <div class="row mt">
+          <label><span class="lbl">Bind IP</span><input id="jn-bind" value="0.0.0.0" /></label>
+          <label><span class="lbl">This server's address</span><input id="jn-host" list="rs-hosts" value="${esc(lan[0] || hosts.hostname)}" /></label>
+        </div>
+        <label class="mt"><span class="lbl">Keyfile (from the replica set page on the other server; empty if it has no auth)</span><textarea id="jn-key" rows="3" spellcheck="false"></textarea></label>
+        <div class="row">
+          <label><span class="lbl">Admin username</span><input id="jn-user" value="admin" autocomplete="off" /></label>
+          <label><span class="lbl">Admin password</span><input id="jn-pass" type="password" autocomplete="new-password" /></label>
+          <button class="primary" onclick="h.joinReplSet()">Prepare member</button>
+        </div>
+        <div class="muted mt">Starts a member here that waits to be added. Then add it from the primary's server: Replica set → Add member → On another server.</div>
+      </div>
+    </div>`;
+
+  pollTimer = setInterval(act(async () => {
+    const list = await api('/replsets');
+    if (ep !== epoch) return;
+    renderList(list);
+  }), 8000);
+}
+
+async function pageReplSet(name) {
+  if (!name) return pageReplSets();
+  layout('replsets', `
+    <h1>Replica set: <span class="mono">${esc(name)}</span></h1>
+    <div id="body" class="muted">Loading…</div>`);
+  const ep = epoch;
+  const [rs, insts] = await Promise.all([api('/replsets/' + name), api('/instances')]);
+  if (ep !== epoch) return;
+  const body = document.getElementById('body');
+  const remoteOk = !isLoopbackHost(rs.advertiseHost);
+
+  // static part rendered once (forms must survive polling)
+  body.innerHTML = `
+    ${rs.joined ? callout('info', `This server <b>joined</b> <span class="mono">${esc(name)}</span>; the set was created on another server. Membership changes go through the primary, wherever it runs.`) : ''}
+    <div id="rs-alert"></div>
+    <div class="grid cols-4" id="rs-stats"></div>
+    <div class="card"><div class="flex"><h2 class="mb0">Members</h2><button class="sm right" onclick="h.rsStepDown('${esc(name)}')">Step down primary</button></div><div id="rs-members" class="mt"></div></div>
+    <div class="card" id="job-card" style="display:none"><h2>Progress</h2><pre class="log" id="job-log"></pre></div>
+    <div class="card">
+      <h2>Add member</h2>
+      <div class="row">
+        <label><span class="lbl">On this server: port</span><input id="am-port" type="number" value="${freePortRange(insts, 1)}" /></label>
+        <button class="primary" onclick="h.rsAddLocal('${esc(name)}')">Add member here</button>
+      </div>
+      <div class="row mt">
+        <label><span class="lbl">On another server: host:port</span><input id="am-host" placeholder="10.0.0.12:27017" ${remoteOk ? '' : 'disabled'} /></label>
+        <button onclick="h.rsAddRemote('${esc(name)}')" ${remoteOk ? '' : 'disabled'}>Add remote member</button>
+      </div>
+      <div class="muted mt">${remoteOk
+        ? 'A remote member must first be prepared on its own server (Replica Sets → Join a replica set) with the keyfile below. New members copy all data (initial sync) before they can vote or serve reads.'
+        : `Members advertise <code>${esc(rs.advertiseHost)}</code>, so this set can only grow on this server. To span servers, create a set that advertises this server's IP or DNS name.`}</div>
+    </div>
+    <div class="card">
+      <h2>Connection string</h2>
+      <code id="rs-conn">—</code>
+      <div class="muted mt">Drivers discover the primary automatically and fail over on their own. ${isLoopbackHost(rs.advertiseHost) ? 'Members advertise a loopback address, so this string only works for apps on this server.' : ''}</div>
+    </div>
+    ${rs.hasKeyFile ? `<div class="card">
+      <h2>Keyfile</h2>
+      <p class="muted">Members authenticate to each other with this shared secret. You need it when joining a member from another server. Treat it like a password.</p>
+      <button class="sm" onclick="h.rsShowKey('${esc(name)}')">Reveal keyfile</button>
+      <pre class="log mt" id="rs-key" style="display:none"></pre>
+    </div>` : ''}
+    <div class="card">
+      <h2>Danger zone</h2>
+      <div class="flex"><span class="muted">Stops and deletes ${rs.joined ? "this server's members" : 'every member on this server'}. Remove remote members first.</span>
+      <button class="danger right" onclick="h.rsDelete('${esc(name)}')">Delete replica set…</button></div>
+    </div>`;
+
+  const render = (d) => {
+    const st = d.status;
+    const stats = document.getElementById('rs-stats');
+    if (!stats) return;
+    const primaryMember = st.ok ? st.members.find((m) => m.state === 'PRIMARY') : null;
+    stats.innerHTML = `
+      <div class="card stat"><div class="label">Health</div><div class="value">${rsHealth(d)}</div></div>
+      <div class="card stat"><div class="label">Primary</div><div class="value mono" style="font-size:15px">${esc(st.primary || '—')}</div><div class="sub">${primaryMember?.instance ? 'instance ' + esc(primaryMember.instance) : primaryMember ? 'on another server' : ''}</div></div>
+      <div class="card stat"><div class="label">Version</div><div class="value">${esc(d.version)}</div></div>
+      <div class="card stat"><div class="label">Auth</div><div class="value">${d.authEnabled ? '<span class="badge ok">enabled</span>' : '<span class="badge warn">open</span>'}</div><div class="sub">${d.authEnabled ? 'keyfile + users' : '<a href="#/instance/' + esc(d.members[0] || '') + '/security">enable…</a>'}</div></div>`;
+    document.getElementById('rs-alert').innerHTML = st.ok ? '' : callout(st.pending ? 'warn' : 'danger', esc(st.error));
+    document.getElementById('rs-conn').textContent = st.connectionString || '—';
+    const el = document.getElementById('rs-members');
+    el.innerHTML = !st.ok ? '<div class="muted">Status unavailable.</div>' : `
+      <table><thead><tr><th>Member</th><th>Instance</th><th>State</th><th>Lag</th><th>Syncing from</th><th>Message</th><th></th></tr></thead><tbody>
+        ${st.members.map((m) => `<tr>
+          <td class="mono">${esc(m.host)}${m.hidden ? ' <span class="badge muted">hidden</span>' : ''}${m.votes === 0 ? ' <span class="badge muted">non-voting</span>' : ''}</td>
+          <td>${m.instance ? `<a class="mono" href="#/instance/${esc(m.instance)}">${esc(m.instance)}</a>` : '<span class="muted">other server</span>'}</td>
+          <td>${rsBadge(m.state)}</td>
+          <td>${m.lagSeconds == null ? '—' : m.lagSeconds + ' s'}</td>
+          <td class="mono">${esc(m.syncSource || '—')}</td>
+          <td class="muted" style="max-width:280px">${esc(m.message)}</td>
+          <td>${st.members.length > 1 ? `<button class="sm danger" onclick="h.rsRemove('${esc(name)}','${esc(m.host)}',${m.instance ? 1 : 0})">Remove</button>` : ''}</td>
+        </tr>`).join('')}
+      </tbody></table>`;
+  };
+  render(rs);
+
+  pollTimer = setInterval(act(async () => {
+    const d = await api('/replsets/' + name);
+    if (ep !== epoch) return;
+    render(d);
+  }), 5000);
 }
 
 async function pageFirewall() {
@@ -829,6 +1059,108 @@ window.h = {
     await api('/auth/change-password', { method: 'POST', body: { currentPassword: val('cp-cur'), newPassword: val('cp-new') } });
     toast('Panel password changed');
     route();
+  }),
+
+  /* replica sets */
+
+  rsBindChanged(prefix) {
+    // binding beyond localhost usually means other machines connect, so they
+    // need a reachable advertised address rather than 127.0.0.1
+    const bind = val(prefix + '-bind');
+    const host = document.getElementById(prefix + '-host');
+    const lan = [...document.querySelectorAll('#rs-hosts option')].map((o) => o.value).find((x) => !isLoopbackHost(x) && /^[0-9.]+$/.test(x));
+    if (host && bind && bind !== '127.0.0.1' && isLoopbackHost(host.value.trim()) && lan) host.value = lan;
+  },
+
+  startJob(jobId, onDone) {
+    const card = document.getElementById('job-card');
+    card.style.display = '';
+    document.getElementById('job-log').textContent = '';
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    watchJob(jobId, 'job-log', onDone);
+  },
+
+  createReplSet: act(async () => {
+    const withAuth = document.getElementById('rc-auth').checked;
+    const name = val('rc-name');
+    const r = await api('/replsets', {
+      method: 'POST',
+      body: {
+        name,
+        version: val('rc-version'),
+        members: Number(val('rc-members')),
+        port: val('rc-port'),
+        bindIp: val('rc-bind'),
+        advertiseHost: val('rc-host'),
+        auth: withAuth ? { username: val('rc-user'), password: document.getElementById('rc-pass').value } : null,
+      },
+    });
+    toast(`Creating replica set "${name}"…`);
+    h.startJob(r.jobId, (job) => { if (job.status === 'done') location.hash = '#/replset/' + name; });
+  }),
+
+  convertReplSet: act(async () => {
+    const name = val('cv-name');
+    const inst = val('cv-inst');
+    if (!confirm(`Convert "${inst}" into replica set "${name}"? The instance restarts; its data is kept.`)) return;
+    const r = await api('/replsets/convert', { method: 'POST', body: { instance: inst, name, advertiseHost: val('cv-host') } });
+    h.startJob(r.jobId, (job) => { if (job.status === 'done') location.hash = '#/replset/' + name; });
+  }),
+
+  joinReplSet: act(async () => {
+    const name = val('jn-name');
+    const keyFile = val('jn-key');
+    const r = await api('/replsets/join', {
+      method: 'POST',
+      body: {
+        name,
+        version: val('jn-version'),
+        port: val('jn-port'),
+        bindIp: val('jn-bind'),
+        advertiseHost: val('jn-host'),
+        keyFile,
+        auth: keyFile ? { username: val('jn-user'), password: document.getElementById('jn-pass').value } : null,
+      },
+    });
+    h.startJob(r.jobId);
+  }),
+
+  rsAddLocal: act(async (name) => {
+    const r = await api(`/replsets/${name}/members`, { method: 'POST', body: { type: 'local', port: val('am-port') } });
+    h.startJob(r.jobId);
+  }),
+
+  rsAddRemote: act(async (name) => {
+    const r = await api(`/replsets/${name}/members`, { method: 'POST', body: { type: 'remote', host: val('am-host') } });
+    h.startJob(r.jobId);
+  }),
+
+  rsRemove: act(async (name, host, isLocal) => {
+    if (!confirm(`Remove ${host} from replica set "${name}"?${isLocal ? '\n\nIts instance on this server will be stopped and deleted.' : ''}`)) return;
+    const purge = isLocal ? confirm('ALSO DELETE ITS DATA DIRECTORY?\n\nOK = delete data permanently\nCancel = keep data on disk') : false;
+    const r = await api(`/replsets/${name}/members/remove`, { method: 'POST', body: { host, purge } });
+    h.startJob(r.jobId);
+  }),
+
+  rsStepDown: act(async (name) => {
+    if (!confirm('Step down the primary? A secondary takes over within seconds; clients reconnect automatically.')) return;
+    await api(`/replsets/${name}/stepdown`, { method: 'POST' });
+    toast('Primary stepped down; an election is running');
+  }),
+
+  rsShowKey: act(async (name) => {
+    const r = await api(`/replsets/${name}/keyfile`);
+    const el = document.getElementById('rs-key');
+    el.textContent = r.keyFile || '(no keyfile)';
+    el.style.display = '';
+  }),
+
+  rsDelete: act(async (name) => {
+    if (!confirm(`Delete replica set "${name}"? All of its members on this server are stopped and their systemd services removed.`)) return;
+    const purge = confirm('ALSO DELETE THE MEMBERS\' DATA DIRECTORIES?\n\nOK = delete data permanently\nCancel = keep data on disk');
+    await api(`/replsets/${name}?purge=${purge ? 1 : 0}`, { method: 'DELETE' });
+    toast(`Replica set "${name}" deleted`);
+    location.hash = '#/replsets';
   }),
 };
 

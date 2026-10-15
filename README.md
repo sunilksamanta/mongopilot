@@ -64,10 +64,24 @@ Then open `http://<server-ip>:8455`, log in, go to **Versions** → install a Mo
 - **One-command install** — a single script sets up Node.js, the panel and a systemd service on any major Linux distro.
 - **MongoDB version catalog** — lists Community releases (5.0 → 8.x) that have builds for your exact distro/arch, installed from official MongoDB tarballs.
 - **Multiple versions & instances, natively** — versions live in `/opt/mongopilot/mongodb/<version>/`; each instance gets its own data dir, `mongod.conf`, port and systemd unit (`mongopilot-<name>.service`). Run 6.0 and 8.0 side by side.
+- **Replica sets**: create a 3/5/7-member replica set in one click (keyfile auth, root user, initiate, election and initial sync all handled), convert an existing instance into a replica set without losing data, add/remove members, step down the primary, and see live member state, lag and sync source. Sets can span servers: prepare a member on another MongoPilot server with **Join a replica set**, then add it from the primary's server.
 - **Security** — one-click enable auth (creates the root user via the localhost exception, flips `security.authorization`, restarts), user CRUD with roles, database create/drop.
 - **Network access** — per-instance `bindIp` management plus IP allowlisting through `ufw` or `firewalld` (port + source CIDR).
 - **Monitoring** — CPU/memory/disk for the server; connections, ops/sec and resident memory per instance (15 s sampling, 1 h window, live charts).
 - **Backups to S3** — `mongodump --archive --gzip` → multipart upload to your bucket, cron scheduling per instance, retention (keep last N), full history.
+
+## Replica sets
+
+From **Replica Sets** in the panel:
+
+| Goal | What to pick |
+|---|---|
+| Transactions / change streams for apps on this server | Create, 1 or 3 members, bind and advertised host `127.0.0.1` |
+| High availability, apps on other machines | Create, 3 members, bind `0.0.0.0`, advertised host = this server's private IP or DNS name, auth on, open the ports on **Firewall** |
+| Keep an existing instance's data | Convert an existing instance, then **Add member** |
+| Members on several servers | On server A: create the set (advertise a reachable address). On server B: **Join a replica set** with the same set name, A's keyfile (shown on the set's page) and the same admin credentials. Back on A: **Add member → On another server** with `B-address:port`. |
+
+The *advertised host* is the address written into the replica set config; drivers and other members connect to it, so it must be reachable from them and belong to this server (cloud public/elastic IPs are usually NAT'ed: use the private IP or a DNS name). MongoPilot checks reachability before initiating and rolls back cleanly if anything fails.
 
 ## Layout on the server
 
@@ -75,8 +89,8 @@ Then open `http://<server-ip>:8455`, log in, go to **Versions** → install a Mo
 |---|---|
 | `/opt/mongopilot/` | app + `mongodb/<version>/` binaries + `mongodb/tools/` (mongodump) |
 | `/etc/mongopilot/config.json` | panel credentials (bcrypt), JWT secret, paths — mode 600 |
-| `/var/lib/mongopilot/instances/<name>/` | per-instance data, `mongod.conf`, `mongod.log` |
-| `/var/lib/mongopilot/state.json` | instance registry, S3 settings (secrets AES-256-GCM encrypted), backup history |
+| `/var/lib/mongopilot/instances/<name>/` | per-instance data, `mongod.conf`, `mongod.log`, `keyfile` (replica set members with auth) |
+| `/var/lib/mongopilot/state.json` | instance and replica set registry, S3 settings (secrets AES-256-GCM encrypted), backup history |
 | `/etc/systemd/system/mongopilot.service` | the panel itself |
 | `/etc/systemd/system/mongopilot-<name>.service` | one per MongoDB instance (runs as user `mongopilot`) |
 
@@ -115,7 +129,7 @@ Without `/etc/mongopilot/config.json` the app runs in **dev mode** (state under 
 
 ## Roadmap
 
-- Replica set setup across instances/servers
+- Arbiters and member priority/hidden/delayed settings
 - Restore-from-S3 flow (mongorestore)
 - TLS for mongod instances, alerting (email/Slack), slow query views
 

@@ -15,6 +15,7 @@ app.use('/api/system', require('./routes/system'));
 app.use('/api/versions', require('./routes/versions'));
 app.use('/api/jobs', require('./routes/jobs'));
 app.use('/api/instances', require('./routes/instances'));
+app.use('/api/replsets', require('./routes/replsets'));
 app.use('/api/firewall', require('./routes/firewall'));
 app.use('/api/backups', require('./routes/backups'));
 
