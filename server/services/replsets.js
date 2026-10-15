@@ -660,6 +660,114 @@ async function removeMember(rsName, { host, purgeData = false }) {
   });
 }
 
+/* ---------------- network access (bind IP + advertised host) ---------------- */
+
+function normalizeBind(list) {
+  const parts = [...new Set(list.map((x) => String(x).trim()).filter(Boolean))];
+  // 0.0.0.0 already covers every interface; listing others next to it makes mongod fail to bind
+  return parts.includes('0.0.0.0') ? '0.0.0.0' : parts.join(',');
+}
+
+// Restarts members one at a time so the set keeps a primary: secondaries
+// first, then the primary after it has handed over to another member.
+async function rollingRestart(rs, list, log) {
+  const primary = await findLocalPrimary(rs);
+  const order = [...list.filter((m) => m !== primary), ...list.filter((m) => m === primary)];
+  for (const m of order) {
+    if (m === primary && localMembers(rs).length > 1) {
+      log(`Stepping down the primary ${m.name} so another member takes over`);
+      await mongo.withClient(m, (c) => c.db('admin').command({ replSetStepDown: 60, secondaryCatchUpPeriodSecs: 15 })).catch((e) => {
+        if (!/not primary|connection|closed|interrupted/i.test(e.message)) throw e;
+      });
+      await waitFor('another member to become primary', async () => {
+        const p = await findLocalPrimary(rs);
+        return p && p !== m;
+      }, { timeoutMs: 60000 });
+    }
+    log(`Restarting ${m.name}`);
+    await systemctl.restart(instances.unitName(m.name));
+    await waitUp(m);
+    await waitFor(`${m.name} to rejoin the set`, async () => {
+      const h = await mongo.hello(m);
+      return h.secondary || h.isWritablePrimary;
+    }, { timeoutMs: 120000 });
+  }
+  await waitFor('a primary', () => findLocalPrimary(rs), { timeoutMs: 90000 });
+}
+
+// Changes where members listen and the address they advertise in the replica
+// set config (what drivers connect to), without downtime for 2+ members.
+async function updateNetwork(rsName, spec) {
+  instances.requireLinux();
+  const rs = get(rsName);
+  const raw = String(spec.bindIp || '').trim() || '127.0.0.1';
+  if (!/^[0-9a-fA-F.:,\s]+$/.test(raw)) throw badRequest('Bind IP must be IP addresses separated by commas, e.g. 0.0.0.0');
+  const bindIp = normalizeBind(raw.split(','));
+  const adv = await resolveAdvertise(spec.advertiseHost);
+  const exposed = !adv.loopback || !bindIp.split(',').every((x) => netutil.isLoopback(x));
+  if (exposed && !rs.authEnabled) {
+    throw badRequest('Enable authentication first (Security & Users tab of any member): without it, anyone who can reach the ports gets full access to your data');
+  }
+  if (adv.loopback && bindIp !== '127.0.0.1') {
+    throw badRequest(`With advertised host ${adv.advertiseHost}, drivers on other machines would be sent to their own localhost. Advertise this server's public/private IP or DNS name instead.`);
+  }
+  const st = await status(rs);
+  if (!st.ok) throw badRequest(`Cannot read the replica set status: ${st.error}`);
+  if (!st.primary) throw badRequest('The replica set has no primary right now; try again in a few seconds');
+  if (st.members.some((m) => !m.instance)) {
+    throw badRequest('Some members run on other servers; network settings can only be changed here when every member is on this server');
+  }
+  const members = localMembers(rs);
+
+  return runJob('replica-set-network', rs.name, async (log) => {
+    const oldBinds = members.map((m) => m.bindIp);
+    let reconfigured = false;
+    try {
+      // 1. listen on the new addresses as well, so the set keeps working while it switches over
+      const before = members.map((m) => instances.effectiveBindIp(m));
+      for (const m of members) m.bindIp = normalizeBind([...bindIp.split(','), adv.advertiseIp || '']);
+      save();
+      for (const m of members) await instances.writeArtifacts(m);
+      const changed = members.filter((m, i) => instances.effectiveBindIp(m) !== before[i]);
+      if (changed.length) {
+        log(`Binding members to ${instances.effectiveBindIp(changed[0])}`);
+        await rollingRestart(rs, changed, log);
+      }
+      // 2. the new advertised address must reach every member
+      for (const m of members) await checkReachable({ advertiseHost: adv.advertiseHost }, m);
+      // 3. switch the replica set config to the new address
+      log(`Updating the replica set config to advertise ${adv.advertiseHost}`);
+      await reconfig(rs, (cfg) => {
+        for (const cm of cfg.members) {
+          const [, port] = netutil.splitHostPort(cm.host);
+          if (members.some((m) => m.port === port)) cm.host = `${adv.advertiseHost}:${port}`;
+        }
+      });
+      reconfigured = true;
+      rs.advertiseHost = adv.advertiseHost;
+      rs.advertiseIp = adv.advertiseIp;
+      rs.bindIp = bindIp;
+      for (const m of members) m.bindIp = bindIp;
+      save();
+      // the extra old address (if any) is dropped at the next restart
+      for (const m of members) await instances.writeArtifacts(m);
+      await waitFor('a primary', () => findLocalPrimary(rs), { timeoutMs: 60000 });
+      const s = await status(rs);
+      log('Done. Members now listen on ' + instances.effectiveBindIp(members[0]) + ` and advertise ${adv.advertiseHost}`);
+      if (s.connectionString) log(`Connection string: ${s.connectionString}`);
+      if (exposed) log('Remember: open these ports only to the IPs that need them (Firewall page), and use a strong password');
+    } catch (e) {
+      if (!reconfigured) {
+        members.forEach((m, i) => (m.bindIp = oldBinds[i]));
+        save();
+        for (const m of members) await instances.writeArtifacts(m).catch(() => {});
+        log('Kept the previous settings (members still listening on new addresses go back at their next restart)');
+      }
+      throw e;
+    }
+  });
+}
+
 async function stepDown(rsName) {
   instances.requireLinux();
   const rs = get(rsName);
@@ -736,6 +844,7 @@ module.exports = {
   removeMember,
   stepDown,
   enableAuth,
+  updateNetwork,
   remove,
   keyFile,
 };
